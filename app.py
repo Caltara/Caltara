@@ -1,61 +1,49 @@
 import streamlit as st
-from datetime import datetime
+import pandas as pd
+import os
+from twilio.rest import Client
+from dotenv import load_dotenv
 
-st.set_page_config(page_title="Caltara – Virtual Assistant", layout="centered")
+load_dotenv()
 
-# Branding
-st.title("🤖 Caltara – Your Virtual Business Assistant")
-st.markdown("Hi! I'm **Caltara**, here to help with client messages and billing support.")
+# Twilio credentials
+twilio_sid = os.getenv("TWILIO_SID")
+twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+twilio_phone = os.getenv("TWILIO_PHONE")
+client = Client(twilio_sid, twilio_auth_token)
 
-# Mode selection
-mode = st.radio("What would you like to do?", ["📬 Leave a Message", "💰 Billing/Collections Help"])
+# Streamlit UI
+st.title("📞 Caltara – AI Collections Agent")
+st.markdown("Upload your CSV of past-due customers, and Caltara will call them automatically.")
 
-if mode == "📬 Leave a Message":
-    st.subheader("📬 Message to Business")
-    name = st.text_input("Your Name")
-    phone = st.text_input("Phone Number")
-    message = st.text_area("Your Message")
+uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
 
-    if st.button("Send Message"):
-        if name and phone and message:
-            st.success("✅ Message sent! The business will contact you shortly.")
-            st.write("### Message Summary")
-            st.write(f"**Timestamp:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            st.write(f"**Name:** {name}")
-            st.write(f"**Phone:** {phone}")
-            st.write(f"**Message:** {message}")
-        else:
-            st.error("❌ Please fill in all fields.")
+if uploaded_file:
+    df = pd.read_csv(uploaded_file)
+    st.dataframe(df)
 
-elif mode == "💰 Billing/Collections Help":
-    st.subheader("💳 Account Lookup")
+    if st.button("Start Calls"):
+        st.info("Starting calls...")
 
-    acct_name = st.text_input("Your Full Name")
-    acct_phone = st.text_input("Phone or Email on File")
+        for i, row in df.iterrows():
+            name = row['name']
+            phone = row['phone']
+            balance = row['balance_due']
+            due = row['due_date']
 
-    if acct_name and acct_phone:
-        # Simulated account data
-        balance = 237.50
-        due_date = "2025-05-20"
+            message = (
+                f"Hello {name}, this is Caltara calling on behalf of your service provider. "
+                f"Our records show a past-due balance of ${balance} was due on {due}. "
+                f"We'd love to help you resolve this today. Please contact us or visit the payment link sent to your phone. Thank you."
+            )
 
-        st.success(f"Account found! Balance due: **${balance:.2f}** (Due: {due_date})")
-        option = st.selectbox("How would you like to proceed?", [
-            "Select an option...",
-            "✅ Pay Full Amount",
-            "📆 Set Up Payment Plan",
-            "❓ Ask a Billing Question"
-        ])
-
-        if option == "✅ Pay Full Amount":
-            st.markdown("Click [here](https://example.com/pay) to pay now. Thank you!")
-
-        elif option == "📆 Set Up Payment Plan":
-            weeks = st.slider("Spread payments over how many weeks?", 1, 6, 2)
-            weekly_payment = balance / weeks
-            st.info(f"Payment Plan: **{weeks} weeks** at **${weekly_payment:.2f}/week**")
-            st.markdown("We’ll send you an email with the plan details shortly.")
-
-        elif option == "❓ Ask a Billing Question":
-            question = st.text_area("Please describe your concern:")
-            if question and st.button("Submit Question"):
-                st.success("Your question has been forwarded to the billing team.")
+            # Place the call
+            try:
+                call = client.calls.create(
+                    twiml=f'<Response><Say voice="alice">{message}</Say></Response>',
+                    to=phone,
+                    from_=twilio_phone
+                )
+                st.success(f"📞 Called {name} at {phone}")
+            except Exception as e:
+                st.error(f"❌ Failed to call {name} at {phone}: {e}")
