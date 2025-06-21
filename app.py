@@ -1,49 +1,50 @@
 import streamlit as st
 import pandas as pd
-import os
-from twilio.rest import Client
-from dotenv import load_dotenv
+import datetime
+from caltara_agent import make_voice_call_with_ai, send_sms
 
-load_dotenv()
+st.title("📞 Caltara Collections Agent")
 
-# Twilio credentials
-twilio_sid = os.getenv("TWILIO_SID")
-twilio_auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-twilio_phone = os.getenv("TWILIO_PHONE")
-client = Client(twilio_sid, twilio_auth_token)
-
-# Streamlit UI
-st.title("📞 Caltara – AI Collections Agent")
-st.markdown("Upload your CSV of past-due customers, and Caltara will call them automatically.")
-
-uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
+uploaded_file = st.file_uploader("Upload customer CSV", type=["csv"])
+method = st.radio("Send via:", ["SMS", "Voice Call"])
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
-    st.dataframe(df)
+    st.write("📋 Customer Preview", df)
 
-    if st.button("Start Calls"):
-        st.info("Starting calls...")
+    required_columns = {"Name", "Phone", "AmountDue", "DueDate"}
+    if not required_columns.issubset(df.columns):
+        st.error(f"❌ CSV must include these columns: {required_columns}")
+        st.stop()
 
-        for i, row in df.iterrows():
-            name = row['name']
-            phone = row['phone']
-            balance = row['balance_due']
-            due = row['due_date']
+    if st.button("Start Contacting Customers"):
+        logs = []
+        with st.spinner("📡 Contacting customers..."):
+            for _, row in df.iterrows():
+                name = row['Name']
+                phone = str(row['Phone'])
+                amount = row['AmountDue']
+                due = pd.to_datetime(row['DueDate']).strftime("%B %d, %Y")
 
-            message = (
-                f"Hello {name}, this is Caltara calling on behalf of your service provider. "
-                f"Our records show a past-due balance of ${balance} was due on {due}. "
-                f"We'd love to help you resolve this today. Please contact us or visit the payment link sent to your phone. Thank you."
-            )
+                try:
+                    if method == "SMS":
+                        result = send_sms(phone, name, amount, due)
+                    else:
+                        result = make_voice_call_with_ai(phone, name, amount, due)
 
-            # Place the call
-            try:
-                call = client.calls.create(
-                    twiml=f'<Response><Say voice="alice">{message}</Say></Response>',
-                    to=phone,
-                    from_=twilio_phone
-                )
-                st.success(f"📞 Called {name} at {phone}")
-            except Exception as e:
-                st.error(f"❌ Failed to call {name} at {phone}: {e}")
+                    status = "Sent"
+                except Exception as e:
+                    status = f"Error: {e}"
+
+                logs.append({
+                    "Name": name,
+                    "Phone": phone,
+                    "Status": status,
+                    "Method": method,
+                    "Time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
+
+        log_df = pd.DataFrame(logs)
+        st.success("✅ All messages processed.")
+        st.write("📊 Contact Log", log_df)
+        log_df.to_csv("logs.csv", index=False)
