@@ -1,47 +1,70 @@
-import os
+import streamlit as st
 import requests
 from twilio.rest import Client
 
-# Load credentials from environment variables
-TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_PHONE = os.getenv("TWILIO_PHONE_NUMBER")
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID")  # Set this for custom voice
+# Load credentials securely from Streamlit Cloud Secrets
+TWILIO_SID = st.secrets["TWILIO_ACCOUNT_SID"]
+TWILIO_AUTH = st.secrets["TWILIO_AUTH_TOKEN"]
+TWILIO_PHONE = st.secrets["TWILIO_PHONE_NUMBER"]
+ELEVENLABS_API_KEY = st.secrets["ELEVENLABS_API_KEY"]
+ELEVENLABS_VOICE_ID = st.secrets["ELEVENLABS_VOICE_ID"]
 
+# Initialize Twilio client
 client = Client(TWILIO_SID, TWILIO_AUTH)
 
 def send_sms(to, name, amount, due_date):
-    msg = f"Hi {name}, your balance of ${amount} is past due since {due_date}. Please pay now to avoid interruption."
+    """Send SMS using Twilio"""
+    msg = (
+        f"Hi {name}, this is a reminder from Caltara AI. "
+        f"Your balance of ${amount} was due on {due_date}. "
+        "Please pay today to avoid service interruption. Thank you!"
+    )
     message = client.messages.create(body=msg, from_=TWILIO_PHONE, to=to)
     return message.sid
 
 def make_voice_call_with_ai(to, name, amount, due_date):
-    text = f"Hello {name}, this is a reminder from Caltara AI. Your payment of {amount} was due on {due_date}. Please visit our website to pay now and avoid service interruption. Thank you."
+    """Generate AI voice with ElevenLabs and place a call via Twilio"""
+    text = (
+        f"Hello {name}, this is Eric from Caltara Collections. "
+        f"Our records show your balance of ${amount} was due on {due_date}. "
+        "To avoid service interruption how would you like to pay your balance today? "
+    )
 
-    # Generate speech using ElevenLabs
+    # Prepare ElevenLabs TTS request
     headers = {
         "xi-api-key": ELEVENLABS_API_KEY,
         "Content-Type": "application/json"
     }
 
+    payload = {
+        "text": text,
+        "model_id": "eleven_monolingual_v1",
+        "voice_settings": {
+            "stability": 0.75,
+            "similarity_boost": 0.75
+        }
+    }
+
+    # Request TTS audio from ElevenLabs
     response = requests.post(
         f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}",
         headers=headers,
-        json={"text": text, "model_id": "eleven_monolingual_v1", "voice_settings": {"stability": 0.75, "similarity_boost": 0.75}},
+        json=payload
     )
 
     if response.status_code != 200:
-        raise Exception("ElevenLabs TTS failed")
+        raise Exception(f"ElevenLabs API error: {response.status_code} {response.text}")
 
+    # Save the MP3 audio locally (for testing or upload)
     with open("voice_message.mp3", "wb") as f:
         f.write(response.content)
 
-    # Upload voice to Twilio-hosted URL or S3 bucket, then call
-    # For demo, we will just call and use Twilio's <Say> fallback
+    # NOTE: Twilio cannot play MP3 files directly without hosting them online.
+    # For now, we use Twilio <Say> to speak the text as a fallback.
     call = client.calls.create(
         to=to,
         from_=TWILIO_PHONE,
         twiml=f"<Response><Say>{text}</Say></Response>"
     )
+
     return call.sid
